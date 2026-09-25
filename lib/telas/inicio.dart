@@ -212,10 +212,13 @@ class _InicioPageState extends State<InicioPage>
           vazio: 'Nada a receber.',
         );
       case 5:
+        final itens = _filtrar((t) => t.status == StatusTransacao.aPagar)
+          ..addAll(_itensAssinaturasEmAberto());
+        ordenarRecentes(itens);
         return ListaExtrato(
           chave: 'apagar',
-          topo: _totalTopo('Total a pagar', dados.aPagar, Cores.vermelho),
-          itens: _filtrar((t) => t.status == StatusTransacao.aPagar),
+          topo: _totalTopo('Total a pagar', dados.aPagarTotal, Cores.vermelho),
+          itens: itens,
           vazio: 'Nenhuma conta a pagar.',
         );
       default:
@@ -223,8 +226,42 @@ class _InicioPageState extends State<InicioPage>
     }
   }
 
+  /// Cada mês em aberto de cada assinatura vira uma conta "a pagar".
+  List<ItemExtrato> _itensAssinaturasEmAberto() {
+    final hoje = soDia(DateTime.now());
+    final itens = <ItemExtrato>[];
+    for (final a in dados.assinaturas) {
+      for (final mes in a.mesesEmAberto()) {
+        final venc = a.vencimentoNoMes(mes);
+        final atrasado = venc.isBefore(hoje);
+        itens.add(ItemExtrato(
+          id: '${a.id}-$mes',
+          titulo: a.descricao,
+          subtitulo: [
+            dataBr(venc),
+            'Assinatura de ${nomeMes(venc).toLowerCase()}',
+            if (atrasado) 'atrasada',
+          ].join(' · '),
+          valor: a.valor,
+          sinal: '−',
+          data: venc,
+          icone: Icons.autorenew_rounded,
+          cor: atrasado ? Cores.laranja : Cores.roxo,
+          aoTocar: () => _abrir(LancamentoPage(
+              tipo: TipoTransacao.saida, editarAssinatura: a)),
+          acao: IconButton(
+            tooltip: 'Pagar',
+            icon: const Icon(Icons.check_circle_outline_rounded,
+                color: Cores.roxo),
+            onPressed: () => _pagarAssinatura(a, mes: mes),
+          ),
+        ));
+      }
+    }
+    return itens;
+  }
+
   Widget _abaAssinaturas() {
-    final hoje = DateTime.now();
     final lista = [...dados.assinaturas]..sort((a, b) => a.dia.compareTo(b.dia));
     final total = lista.fold(0, (s, a) => s + a.valor);
     return ListView(
@@ -232,6 +269,9 @@ class _InicioPageState extends State<InicioPage>
       padding: const EdgeInsets.only(top: 4, bottom: 110),
       children: [
         _totalTopo('Total por mês', total, Cores.roxo),
+        if (dados.assinaturasEmAberto > 0)
+          _totalTopo('Em aberto (já descontado do saldo)',
+              dados.assinaturasEmAberto, Cores.vermelho),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
           child: OutlinedButton.icon(
@@ -249,44 +289,65 @@ class _InicioPageState extends State<InicioPage>
           ),
         ),
         if (lista.isEmpty) const Vazio('Nenhuma assinatura cadastrada.'),
-        for (final a in lista)
-          LinhaExtrato(ItemExtrato(
-            id: a.id,
-            titulo: a.descricao,
-            subtitulo: [
-              'Todo dia ${a.dia}',
-              a.pagoNoMes(hoje) ? 'Pago este mês ✓' : 'Falta pagar este mês',
-              if (a.lembrete) '🔔',
-            ].join(' · '),
-            valor: a.valor,
-            sinal: '−',
-            data: hoje,
-            icone: Icons.autorenew_rounded,
-            cor: a.pagoNoMes(hoje) ? Cores.texto2 : Cores.roxo,
-            apagado: a.pagoNoMes(hoje),
-            aoTocar: () => _abrir(LancamentoPage(
-                tipo: TipoTransacao.saida, editarAssinatura: a)),
-            acao: a.pagoNoMes(hoje)
-                ? const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12),
-                    child: Icon(Icons.check_circle_rounded,
-                        color: Cores.verde, size: 22),
-                  )
-                : IconButton(
-                    tooltip: 'Pagar',
-                    icon: const Icon(Icons.check_circle_outline_rounded,
-                        color: Cores.roxo),
-                    onPressed: () => _pagarAssinatura(a),
-                  ),
-          )),
+        for (final a in lista) _linhaAssinatura(a),
       ],
     );
   }
 
-  Future<void> _pagarAssinatura(Assinatura a) async {
+  Widget _linhaAssinatura(Assinatura a) {
+    final abertos = a.mesesEmAberto();
+    final emDia = abertos.isEmpty;
+    final String situacao;
+    if (emDia) {
+      situacao = 'Pago este mês ✓';
+    } else if (abertos.length == 1) {
+      final m = Assinatura.mesDaChave(abertos.first);
+      final agora = DateTime.now();
+      situacao = (m.year == agora.year && m.month == agora.month)
+          ? 'Falta pagar este mês'
+          : 'Falta pagar ${nomeMes(m).toLowerCase()}';
+    } else {
+      situacao = '${abertos.length} meses em aberto';
+    }
+    return LinhaExtrato(ItemExtrato(
+      id: a.id,
+      titulo: a.descricao,
+      subtitulo: [
+        'Todo dia ${a.dia}',
+        situacao,
+        if (a.lembrete) '🔔',
+      ].join(' · '),
+      valor: emDia ? a.valor : a.valorEmAberto,
+      sinal: '−',
+      data: DateTime.now(),
+      icone: Icons.autorenew_rounded,
+      cor: emDia ? Cores.texto2 : Cores.roxo,
+      apagado: emDia,
+      aoTocar: () => _abrir(
+          LancamentoPage(tipo: TipoTransacao.saida, editarAssinatura: a)),
+      acao: emDia
+          ? const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Icon(Icons.check_circle_rounded,
+                  color: Cores.verde, size: 22),
+            )
+          : IconButton(
+              tooltip: 'Pagar',
+              icon: const Icon(Icons.check_circle_outline_rounded,
+                  color: Cores.roxo),
+              onPressed: () => _pagarAssinatura(a),
+            ),
+    ));
+  }
+
+  Future<void> _pagarAssinatura(Assinatura a, {String? mes}) async {
+    final abertos = a.mesesEmAberto();
+    final chave = mes ?? (abertos.isNotEmpty ? abertos.first : null);
+    final nomeDoMes =
+        chave == null ? '' : ' (${nomeMes(Assinatura.mesDaChave(chave))})';
     final r = await abrirMovimento(
       context,
-      titulo: 'Pagar ${a.descricao}',
+      titulo: 'Pagar ${a.descricao}$nomeDoMes',
       cor: Cores.vermelho,
       prefixo: '− R\$',
       botao: 'Pagar',
@@ -299,7 +360,7 @@ class _InicioPageState extends State<InicioPage>
     );
     if (r == null) return;
     await dados.pagarAssinatura(a, r.data,
-        valor: r.valor, descricao: r.descricao);
+        valor: r.valor, descricao: r.descricao, mes: chave);
     if (mounted) aviso(context, '${a.descricao} lançada como saída paga.');
   }
 
@@ -414,7 +475,7 @@ class _InicioPageState extends State<InicioPage>
             children: [
               _Stat('A receber', dados.aReceber, const Color(0xFF86EFAC),
                   () => _tab.animateTo(4)),
-              _Stat('A pagar', dados.aPagar, Cores.vermelho,
+              _Stat('A pagar', dados.aPagarTotal, Cores.vermelho,
                   () => _tab.animateTo(5)),
               _Stat('Cofres', dados.totalCofres, Cores.amarelo,
                   () => _abrir(const CofresPage()),
