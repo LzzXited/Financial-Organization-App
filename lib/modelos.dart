@@ -141,6 +141,9 @@ class Assinatura {
   bool lembrete;
   final int notifId;
 
+  /// Mês ('aaaa-mm') a partir do qual a assinatura passa a ser cobrada.
+  String inicio;
+
   /// 'aaaa-mm' -> id da saída que foi lançada ao pagar aquele mês.
   Map<String, String> pagamentos;
 
@@ -151,14 +154,48 @@ class Assinatura {
     required this.dia,
     this.lembrete = true,
     int? notifId,
+    String? inicio,
     Map<String, String>? pagamentos,
   })  : notifId = notifId ?? _rnd.nextInt(1 << 30),
+        inicio = inicio ?? chaveMes(DateTime.now()),
         pagamentos = pagamentos ?? {};
 
   static String chaveMes(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}';
 
+  static DateTime mesDaChave(String k) =>
+      DateTime(int.parse(k.substring(0, 4)), int.parse(k.substring(5, 7)));
+
   bool pagoNoMes(DateTime d) => pagamentos.containsKey(chaveMes(d));
+
+  /// Meses (do mais antigo ao atual) que ainda não foram pagos.
+  /// Cada mês novo que começa entra aqui sozinho, até ser pago.
+  List<String> mesesEmAberto([DateTime? referencia]) {
+    final hoje = referencia ?? DateTime.now();
+    final fim = DateTime(hoje.year, hoje.month);
+    var d = mesDaChave(inicio);
+    final r = <String>[];
+    var guarda = 0;
+    while (!d.isAfter(fim) && guarda < 600) {
+      final k = chaveMes(d);
+      if (!pagamentos.containsKey(k)) r.add(k);
+      d = DateTime(d.year, d.month + 1);
+      guarda++;
+    }
+    return r;
+  }
+
+  /// Quanto ainda falta pagar (valor × meses em aberto).
+  int get valorEmAberto => valor * mesesEmAberto().length;
+
+  bool get emDia => mesesEmAberto().isEmpty;
+
+  /// Data de vencimento dentro de um mês ('aaaa-mm').
+  DateTime vencimentoNoMes(String chave) {
+    final m = mesDaChave(chave);
+    final ultimo = DateTime(m.year, m.month + 1, 0).day;
+    return DateTime(m.year, m.month, dia > ultimo ? ultimo : dia);
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -167,16 +204,27 @@ class Assinatura {
         'dia': dia,
         'lembrete': lembrete,
         'notifId': notifId,
+        'inicio': inicio,
         'pagamentos': pagamentos,
       };
 
-  factory Assinatura.fromJson(Map<String, dynamic> j) => Assinatura(
+  factory Assinatura.fromJson(Map<String, dynamic> j) {
+    final pags = Map<String, String>.from((j['pagamentos'] ?? {}) as Map);
+    var inicio = j['inicio'] as String?;
+    if (inicio == null) {
+      // Dados antigos: começa no primeiro mês pago ou no mês atual.
+      final chaves = pags.keys.toList()..sort();
+      inicio = chaves.isNotEmpty ? chaves.first : chaveMes(DateTime.now());
+    }
+    return Assinatura(
         id: j['id'] as String,
         descricao: (j['descricao'] ?? '') as String,
         valor: (j['valor'] as num).toInt(),
         dia: (j['dia'] as num).toInt(),
         lembrete: (j['lembrete'] ?? true) as bool,
         notifId: (j['notifId'] as num?)?.toInt(),
-        pagamentos: Map<String, String>.from((j['pagamentos'] ?? {}) as Map),
+        inicio: inicio,
+        pagamentos: pags,
       );
+  }
 }
