@@ -1,0 +1,51 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+
+      - name: Completar arquivos do projeto Android
+        run: flutter create --platforms=android --org com.lzz --project-name financas .
+
+      - name: Baixar pacotes
+        run: flutter pub get
+
+      - name: Gerar APK
+        run: flutter build apk --release
+
+      - name: Renomear APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk MinhasFinancas-v${{ github.run_number }}.apk
+
+      - name: Guardar APK (aba Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MinhasFinancas-v${{ github.run_number }}
+          path: MinhasFinancas-v${{ github.run_number }}.apk
+
+      - name: Publicar em Releases (link direto para baixar no celular)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Minhas Finanças v${{ github.run_number }}
+          files: MinhasFinancas-v${{ github.run_number }}.apk
