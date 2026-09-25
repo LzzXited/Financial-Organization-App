@@ -112,6 +112,14 @@ class Dados extends ChangeNotifier {
   int get aPagar => _soma(transacoes.where((t) =>
       t.tipo == TipoTransacao.saida && t.status == StatusTransacao.aPagar));
 
+  /// Assinaturas deste mês (e de meses anteriores) que ainda não foram pagas.
+  /// Já descontam do saldo antes de pagar, para você não gastar esse dinheiro.
+  int get assinaturasEmAberto =>
+      assinaturas.fold(0, (s, a) => s + a.valorEmAberto);
+
+  /// Contas a pagar + assinaturas em aberto.
+  int get aPagarTotal => aPagar + assinaturasEmAberto;
+
   /// Soma de todos os rendimentos.
   int get investido =>
       _soma(transacoes.where((t) => t.tipo == TipoTransacao.rendimento));
@@ -141,10 +149,10 @@ class Dados extends ChangeNotifier {
   /// Dinheiro disponível na mão / na conta (sem contar cofres de terceiros).
   int get livre => _entradasRecebidas - _saidasPagas + _efeitoDividas;
 
-  /// Saldo geral = Livre + Investido + Na rua − A pagar.
+  /// Saldo geral = Livre + Investido + Na rua − A pagar − assinaturas em aberto.
   /// Emprestar ou receber de volta não muda o saldo (o dinheiro continua meu).
   /// Os cofres não entram (o dinheiro não é meu).
-  int get saldoGeral => livre + investido + naRua - aPagar;
+  int get saldoGeral => livre + investido + naRua - aPagarTotal;
 
   // ------------------------------------------------------------- transações
 
@@ -195,8 +203,11 @@ class Dados extends ChangeNotifier {
   }
 
   /// Lança a assinatura como uma saída paga na data escolhida.
+  /// Quita o mês em aberto mais antigo (ou o mês informado em [mes]).
   Future<void> pagarAssinatura(Assinatura a, DateTime data,
-      {int? valor, String? descricao}) async {
+      {int? valor, String? descricao, String? mes}) async {
+    final abertos = a.mesesEmAberto();
+    final chave = mes ?? (abertos.isNotEmpty ? abertos.first : Assinatura.chaveMes(data));
     final t = Transacao(
       id: novoId(),
       tipo: TipoTransacao.saida,
@@ -206,7 +217,7 @@ class Dados extends ChangeNotifier {
       status: StatusTransacao.pago,
     );
     transacoes.add(t);
-    a.pagamentos[Assinatura.chaveMes(data)] = t.id;
+    a.pagamentos[chave] = t.id;
     await _salvar();
   }
 
